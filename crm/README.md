@@ -39,13 +39,17 @@ visitors would see it, following each change as it is typed (`live`) and the blo
 | **Desks** | Each category of posts can have its own editors, reviewers and publishers, and the approvals a post needs: draft → review → approved → published, with changes asked for by note, mail at each step, and a queue of what waits for you. |
 | **Questions and notes** | The app asks before it deletes, and tells you what it did, in dialogs and notes on the page (`ask`, `notify`), in a notice style plugins bring (Standard, Quiet; Glass and Bold from the Notice styles plugin): where they open and how they look. |
 | **Newsroom suite** | A plugin whose model is a newspaper's: Categories (which can depend on one another: Elections, part of Politics) and Articles, with their states (Draft, In review, Changes asked, Approved, Published) and moves for the Writers, Reviewers and Publishers groups, all the workspace's own to design further. Reviewers mark any words or picture and comment; threads are answered and resolved; moves tell the next people. Articles are the site: a front page, a page per section, a page per story. |
-| **Roles and groups** | Roles: what each may do with each object (see, edit, delete), each field (edit, read, hidden), and an access script deciding which records they see. Groups: people who work together, who get the group's roles and are what it is on the team (designers, writers, reviewers, publishers). |
+| **Roles and groups** | Roles: what each may do with each object (see, edit, delete), each field (edit, read, hidden), and an access script deciding which records they see. Groups: people who work together, who get the group's roles and are what it is on the team (designers, writers, reviewers, publishers). Only owners, admins and designers change pages, the theme, objects and flows, and start flows; other members see them. Members edit contacts, companies, deals and campaigns, their daily work; moderating readers' comments and deleting images (or changing someone else's) are for designers and admins; a deal is deleted by its owner or an admin; exporting every contact is for admins (an object's records export as each person's roles let them see them, hidden fields left out). |
 | **States** | Objects have states and the moves between them: each move for some groups or roles, with a form of the fields it needs; the state changes by a move and nothing else. Flows start when a record moves, ask a group or a role to decide (approved / rejected), and move records. |
 | **Workspaces** | Signing up on the main site; presets per industry (pipeline, products, forms, flows, plugins); a team with owner, admin and member roles; settings. |
+| **Audit log** | Sign-ins (and failed ones), signing out, the team and its roles and groups, settings and plugins, pages and posts published, flows changed, deletes, refunds and exports, each with who, when and from where; in Settings for admins, with a check that no row was changed since it was written (`lib/audit.qwe`). A change and its row are written together, or neither is. |
 
 Payments run in test mode (`4242 4242 4242 4242` pays, `4000 0000 0000 0002` is
 declined), and mail stays in the outbox until a mail webhook is set in Settings: then
-each mail is POSTed there as `{ to, subject, html }`, the shape email APIs take.
+each mail is POSTed there as `{ to, subject, html }`, the shape email APIs take. Mail
+webhooks and flows' webhook steps post only to https:// addresses on the public internet
+(not the server itself, its network or a cloud's metadata service), without following
+redirects.
 
 ## How it is put together
 
@@ -138,7 +142,16 @@ visitor's session and its forms work without JavaScript. `quote_lines` computes 
 subtotal, discount (a percentage, an amount, or free shipping, from a code with a minimum
 and a number of uses), shipping (one rate, free over an amount) and tax (from plugins) —
 the cart and the checkout show it, and the server charges it. Paying takes the stock,
-counts the code's use, and starts the purchase flows for each product. A product in
+counts the code's use, and starts the purchase flows for each product. A code's use is
+taken in the order's transaction only while it has uses left (`take_discount_use`), so
+two checkouts at once cannot both take its last one; the second is refused and nothing
+of it is kept.
+
+A plugin can ask the team to check an order by hand (its `review`): the reason is kept
+with the order (a "check" badge on Orders) and becomes a task. The VAT plugin does so
+when a business's VAT number from another EU country took the tax off (reverse charge):
+only the number's shape is checked at the checkout, so the team checks it with the EU's
+VIES service before shipping, and charges the tax if it is not valid. A product in
 variants asks which on its page; the cart keeps each variant apart (`sku~variant`), and
 paying and refunding count each one's stock.
 
@@ -315,5 +328,11 @@ two modes are the same program: with one workspace, every request belongs to it.
 - Many workspaces: `CRM_DOMAIN=example.com` and a wildcard DNS record (`*.example.com`); one: `CRM_MODE=single`. Either way behind a proxy
   that terminates HTTPS (limer, Caddy, nginx); set `CRM_SCHEME=https`.
 - `QUILLO_SECRET` to a long random string, the same on every server: it signs sessions.
-- `data/` holds every workspace's database: back it up.
+- Signing up makes a database file per workspace, so it is limited: five an hour from one
+  address, and `CRM_SIGNUPS_PER_HOUR` (100 by default) an hour in all. Behind a proxy,
+  every request comes from the proxy's address: the first limit then counts everyone.
+- `data/` holds every workspace's database: back it up (`db.backup` in a scheduled job, for
+  each workspace: see the user guide's Database section).
+- The audit log is in each workspace's database (`_quillo_audit`); `--log json --log-file
+  logs/requests.log` keeps the request log, with the user, a file a day.
 - Set a mail webhook in each workspace's Settings to send mail for real.
