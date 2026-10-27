@@ -1,0 +1,16 @@
+[package]
+name = "quillo-apps"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT"
+description = "Whole applications written in Quillo, tested against the quillo crate"
+
+# The apps are Quillo programs; this package only holds their tests, which load
+# them in quillo's interpreter.
+[dev-dependencies]
+quillo = { git = "https://github.com/quillolang/quillo", branch = "main" }
+# The versions and features quillo itself uses, so they are shared with it.
+serde_json = { version = "1", features = ["preserve_order"] }
+rusqlite = { version = "0.32", features = ["bundled", "column_decltype"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
