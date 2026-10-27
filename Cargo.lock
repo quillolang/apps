@@ -1892,7 +1892,7 @@ checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 [[package]]
 name = "quillo"
 version = "0.5.0"
-source = "git+https://github.com/quillolang/quillo?branch=finance#999ac08ab79047d59d58638d45810f4b31745e9e"
+source = "git+https://github.com/quillolang/quillo?branch=main#654f984ddaa11319d36244d53c10a6400dc03960"
 dependencies = [
  "argon2",
  "bytes",
