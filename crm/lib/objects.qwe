@@ -163,7 +163,6 @@ server fn save_object(o: map) {
             key, name, plural, blank(o.icon) ? "◆" : trim(o.icon), trim(o.description ?? ""), o.title_field ?? "", json.stringify(rules), json.stringify(states), json.stringify(transitions), table, now())
         objects_ready()
         sync_table(key)
-        audit("object.create", { key })
         key
     } else {
         let site = site_config(o.site ?? {})?
@@ -173,8 +172,6 @@ server fn save_object(o: map) {
         if len(states) > 0 {
             for r in rec_all(o.key, 100000) | filter((r) => !contains(keys_of, r.state)) => rec_set(o.key, r.id, { state: states[0].key })
         }
-        // Its moves say which groups and roles may make them.
-        audit("object.change", { key: o.key, transitions: transitions | map((t) => { key: t.key, groups: t.groups, roles: t.roles }) })
         o.key
     }
 }
@@ -192,7 +189,6 @@ server fn delete_object(key: str) {
         drop_table(key)
         db.exec("delete from custom_fields where entity = ?", `obj.${key}`)
         db.exec("delete from objects where key = ?", key)
-        audit("object.delete", { key })?
     })
     true
 }
@@ -494,7 +490,7 @@ server fn delete_record(key: str, id: int) {
     let u = need_user()?
     let r = (rec_get(key, id) ?? err("No such record"))?
     need_access(u, key, "delete", r)?
-    audited("record.delete", { object: key, id, title: r.title }, () => rec_delete(key, id))?
+    rec_delete(key, id)
     true
 }
 
@@ -513,7 +509,6 @@ fn records_csv(key: str) {
     let hide = title_hidden(a, o, all)
     let rows = sort_by(rec_all(key, 1000000), (r) => r.id) | filter((r) => may_see(u, a, r))
         | map((r) => csv_row([str(r.id), hide ? "" : r.title] + (fields | map((f) => str(r.fields[f.key] ?? "")))))
-    audit("records.export", { object: key, rows: len(rows) })
     respond(200, join([csv_row(["id", "title"] + (fields | map((f) => f.key)))] + rows, "\n") + "\n",
         { "content-type": "text/csv; charset=utf-8", "content-disposition": `attachment; filename=${key}.csv` })
 }

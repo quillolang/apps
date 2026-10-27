@@ -10,5 +10,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Tests (against quillo's finance branch)
+      - name: Tests (against quillo's main)
         run: cargo update -p quillo && cargo test

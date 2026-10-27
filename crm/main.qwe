@@ -23,11 +23,6 @@ db.open("data/{tenant}.db")
 // Quillo's own tables (scheduled jobs' runs), with the rest of the data.
 db.system("data/quillo-system.db")
 db.migrate("migrations")
-// Sessions on the server, so signing out (or an admin) ends them: half an
-// hour unused, or twelve hours, signs a person out. Pages run only their
-// own scripts.
-sessions({ store: "db", idle: "30m", max_age: "12h" })
-csp()
 
 use "lib/util.qwe"
 use "lib/rules.qwe"
@@ -50,8 +45,6 @@ use "plugins/studio/index.qwe"
 let plugins = [plugin_core, plugin_blog, plugin_gdpr, plugin_loyalty, plugin_vat, plugin_paywall, plugin_sponsors, plugin_quality, plugin_notices, plugin_newsroom] + studio_plugins
 
 use "lib/records.qwe"
-use "lib/audit.qwe"
-use "lib/security.qwe"
 use "lib/commerce.qwe"
 use "lib/marketing.qwe"
 use "lib/flows.qwe"
@@ -91,8 +84,6 @@ use "ui/code.qwe"
 use "ui/site.qwe"
 use "ui/objects.qwe"
 use "ui/review.qwe"
-use "ui/security.qwe"
-use "ui/audit.qwe"
 
 // `http://acme.localhost:9000` for a workspace, from the main site's host.
 fn workspace_url(slug: str, host: str) {
@@ -222,106 +213,30 @@ route GET /login {
 
 route POST /login { form: { email: str, password: str } } {
     workspace_here()
-    rate_limit(`login:${request.ip}`, 30, "1m", { reply: true })
-    let who = lower(trim(email))
-    if login_locked(who) {
-        audit("login.locked", { email: who, step: "password" })
-        return redirect(`/login?problem=locked&email=${who}`)
-    }
-    let u = db.one("select * from users where email = ?", who)
+    let u = db.one("select * from users where email = ?", lower(trim(email)))
     // An address no one has is checked against a stand-in hash (a null
     // hash), so it takes as long as a wrong password: the time tells nothing.
     let right = crypto.verify_password(password, u == null ? null : u.password_hash)
     if u == null || !right {
-        login_failed(who)
-        audit("login.failed", { email: who, step: "password" })
         return redirect(`/login?problem=wrong&email=${email}`)
     }
-    // A second step: the code, or setting the app up when the workspace asks.
-    // Signed in (and in the audit log as such) only once it is passed.
-    let next = second_step_next(u, "password")
-    if next != null { return next }
-    login_ok(who)
     set_session({ user: u.id })
-    audit("login", { method: "password" })
     put_setting("url", `${SCHEME}://${request.headers.host}`)
     redirect("/app")
-}
-
-route GET /login/code {
-    workspace_here()
-    pending_user() ?? reply 303 redirect("/login?problem=expired")
-    <CodePage problem={request.query.problem ?? ""}/>
-}
-
-route POST /login/code { form: { code: str } } {
-    workspace_here()
-    let u = pending_user() ?? reply 303 redirect("/login?problem=expired")
-    if login_locked(u.email) {
-        audit("login.locked", { email: u.email, step: "code" })
-        return redirect(`/login?problem=locked&email=${u.email}`)
-    }
-    let passed = has_two_step(u) ? second_step(u, code) : null
-    if passed == null {
-        login_failed(u.email)
-        audit("login.failed", { email: u.email, step: "code" })
-        return redirect("/login/code?problem=wrong")
-    }
-    login_ok(u.email)
-    let method = session().pending_method ?? "password"
-    set_session({ user: u.id })
-    audit("login", { method, second_step: passed })
-    put_setting("url", `${SCHEME}://${request.headers.host}`)
-    redirect("/app")
-}
-
-route GET /login/setup {
-    workspace_here()
-    let u = pending_user() ?? reply 303 redirect("/login?problem=expired")
-    if has_two_step(u) { return redirect("/login/code") }
-    let s = new_two_step(u)
-    <TwoStepSetupPage secret={s.secret} uri={s.uri} problem={request.query.problem ?? ""}/>
-}
-
-route POST /login/setup { form: { code: str } } {
-    workspace_here()
-    let u = pending_user() ?? reply 303 redirect("/login?problem=expired")
-    if has_two_step(u) { return redirect("/login/code") }
-    let codes = confirm_two_step(u, code)
-    if is_err(codes) {
-        login_failed(u.email)
-        audit("login.failed", { email: u.email, step: "setup" })
-        return redirect("/login/setup?problem=wrong")
-    }
-    login_ok(u.email)
-    let method = session().pending_method ?? "password"
-    set_session({ user: u.id })
-    audit("login", { method, second_step: "app" })
-    put_setting("url", `${SCHEME}://${request.headers.host}`)
-    <RecoveryPage {codes}/>
 }
 
 route POST /logout {
-    if tenant() != null { audit("logout") }
     end_session()
     redirect("/login")
 }
 
-// The link from signing up: signs the owner in once, or takes them on to
-// the second step when they have one (or the workspace asks for it).
+// The link from signing up: signs the owner in once.
 route GET /welcome/:token {
     workspace_here()
     let row = db.one("select * from sign_in_tokens where token = ? and expires_at > ?", token, now())
-    let u = row == null ? null : db.one("select * from users where id = ?", row.user_id)
-    if u == null {
-        audit("login.failed", { method: "link" })
-        return redirect("/login?problem=expired")
-    }
+    if row == null { return redirect("/login?problem=expired") }
     db.exec("delete from sign_in_tokens where token = ?", token)
-    let next = second_step_next(u, "link")
-    if next != null { return next }
     set_session({ user: row.user_id })
-    audit("login", { method: "link" })
     put_setting("url", `${SCHEME}://${request.headers.host}`)
     redirect("/app")
 }
@@ -337,7 +252,6 @@ route GET /app/export/contacts.csv {
     let rows = db.query("select * from contacts order by id") | map(contact_out) | map((c) =>
         csv_row([c.first_name, c.last_name, c.email, c.phone, c.stage, c.subscribed ? "yes" : "no", join(c.tags, " ")]
             + (fields | map((f) => c.fields[f.key]))))
-    audit("contacts.export", { rows: len(rows) })
     respond(200, join([head] + rows, "\n") + "\n", { "content-type": "text/csv; charset=utf-8", "content-disposition": "attachment; filename=contacts.csv" })
 }
 
@@ -372,7 +286,6 @@ route POST /app/import/contacts {
         }
     })
     let ok = results | filter((r) => r) | len
-    audit("contacts.import", { imported: ok, skipped: len(results) - ok })
     drain_runs()
     redirect(`/app/contacts?imported=${ok}&skipped=${len(results) - ok}`)
 }
